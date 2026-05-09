@@ -30,6 +30,7 @@
     }
 
     .stage {
+      position: relative;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
@@ -76,6 +77,47 @@
 
     #hour { cursor: grab; }
     #hour.dragging { cursor: grabbing; }
+
+    .reset-btn {
+      position: absolute;
+      left: 50%;
+      bottom: 36px;
+      transform: translateX(-50%);
+      appearance: none;
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid rgba(26, 26, 26, 0.22);
+      padding: 9px 20px;
+      border-radius: 999px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      cursor: pointer;
+      user-select: none;
+      opacity: 0;
+      pointer-events: none;
+      transition:
+        opacity 0.22s ease,
+        background-color 0.15s ease,
+        color 0.15s ease,
+        transform 0.12s ease;
+    }
+
+    .reset-btn.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .reset-btn:hover {
+      background: var(--ink);
+      color: var(--face);
+    }
+
+    .reset-btn.visible:active {
+      transform: translateX(-50%) scale(0.97);
+    }
 
     .hour-numeral {
       font-family: "Nunito", ui-rounded, "SF Pro Rounded", system-ui, "Helvetica Neue", sans-serif;
@@ -153,6 +195,8 @@
       <!-- Center cap -->
       <circle r="3.2" fill="var(--ink)" />
     </svg>
+
+    <button class="reset-btn" id="resetBtn" type="button">Reset</button>
   </main>
 
   <script>
@@ -166,6 +210,7 @@
       const secondHand = document.getElementById('second');
       const zoneCity = document.getElementById('zoneCity');
       const zoneOffset = document.getElementById('zoneOffset');
+      const resetBtn = document.getElementById('resetBtn');
 
       const TIMEZONES = [
         { offset: -12, city: 'Baker Island' },
@@ -197,8 +242,18 @@
         { offset: 14,  city: 'Kiritimati' },
       ];
 
-      let utcOffset = Math.max(-12, Math.min(14,
+      const localOffset = Math.max(-12, Math.min(14,
         Math.round(-new Date().getTimezoneOffset() / 60)));
+      let utcOffset = localOffset;
+
+      try {
+        const localZoneName = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (localZoneName && localZoneName.includes('/')) {
+          const localCity = localZoneName.split('/').pop().replace(/_/g, ' ');
+          const match = TIMEZONES.find(z => z.offset === localOffset);
+          if (match) match.city = localCity;
+        }
+      } catch (_) {}
 
       for (let h = 1; h <= 12; h++) {
         const angle = h * 30 * Math.PI / 180;
@@ -234,6 +289,7 @@
         zoneCity.textContent = tz.city;
         const sign = utcOffset >= 0 ? '+' : '-';
         zoneOffset.textContent = `UTC${sign}${Math.abs(utcOffset)}`;
+        resetBtn.classList.toggle('visible', utcOffset !== localOffset);
       }
 
       updateZoneLabel();
@@ -280,14 +336,45 @@
       }
 
       let dragState = null;
-      let snapAnim = null;
+      let handAnim = null;
 
-      function cancelSnap() {
-        if (snapAnim) {
-          cancelAnimationFrame(snapAnim.frame);
-          snapAnim = null;
+      function cancelHandAnim() {
+        if (handAnim) {
+          cancelAnimationFrame(handAnim.frame);
+          handAnim = null;
         }
       }
+
+      function getRenderedHandAngle() {
+        const t = hourHand.getAttribute('transform') || 'rotate(0)';
+        const match = t.match(/rotate\(([-0-9.]+)\)/);
+        return match ? parseFloat(match[1]) : 0;
+      }
+
+      function animateHandBy(fromAngle, totalDiff, duration, easing) {
+        cancelHandAnim();
+        const start = performance.now();
+        handAnim = { frame: 0 };
+        function step(now) {
+          const t = Math.min(1, (now - start) / duration);
+          const eased = easing(t);
+          hourHand.setAttribute('transform', `rotate(${fromAngle + totalDiff * eased})`);
+          if (t < 1) {
+            handAnim.frame = requestAnimationFrame(step);
+          } else {
+            handAnim = null;
+          }
+        }
+        handAnim.frame = requestAnimationFrame(step);
+      }
+
+      const easeOutBack = (t) => {
+        const c1 = 1.70158, c3 = c1 + 1;
+        return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+      };
+      const easeInOutCubic = (t) => t < 0.5
+        ? 4 * t * t * t
+        : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
       function handAngleForOffset(offset) {
         const now = new Date();
@@ -303,7 +390,7 @@
       svg.addEventListener('pointerdown', (e) => {
         if (!isNearHourHand(e)) return;
         e.preventDefault();
-        cancelSnap();
+        cancelHandAnim();
         svg.setPointerCapture(e.pointerId);
         hourHand.classList.add('dragging');
         dragState = {
@@ -350,27 +437,31 @@
         dragState = null;
 
         if (Math.abs(diff) < 0.1) return;
-
-        const start = performance.now();
-        const duration = 220;
-        snapAnim = { frame: 0 };
-        function step(now) {
-          const t = Math.min(1, (now - start) / duration);
-          // easeOutBack-ish for a tactile snap
-          const c1 = 1.70158, c3 = c1 + 1;
-          const eased = 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
-          hourHand.setAttribute('transform', `rotate(${fromAngle + diff * eased})`);
-          if (t < 1) {
-            snapAnim.frame = requestAnimationFrame(step);
-          } else {
-            snapAnim = null;
-          }
-        }
-        snapAnim.frame = requestAnimationFrame(step);
+        animateHandBy(fromAngle, diff, 220, easeOutBack);
       }
 
       svg.addEventListener('pointerup', endDrag);
       svg.addEventListener('pointercancel', endDrag);
+
+      resetBtn.addEventListener('click', () => {
+        if (dragState) {
+          try { svg.releasePointerCapture(dragState.pointerId); } catch (_) {}
+          hourHand.classList.remove('dragging');
+          dragState = null;
+        }
+        if (utcOffset === localOffset) return;
+
+        const fromAngle = getRenderedHandAngle();
+        utcOffset = localOffset;
+        updateZoneLabel();
+
+        const toAngle = handAngleForOffset(localOffset);
+        const shortDiff = ((toAngle - fromAngle + 540) % 360) - 180;
+        // Always travel through at least one full revolution in the chosen direction.
+        const totalDiff = shortDiff >= 0 ? shortDiff + 360 : shortDiff - 360;
+        const duration = Math.min(1400, 700 + Math.abs(totalDiff) * 0.6);
+        animateHandBy(fromAngle, totalDiff, duration, easeInOutCubic);
+      });
 
       function tick() {
         const now = new Date();
@@ -386,7 +477,7 @@
         secondHand.setAttribute('transform', `rotate(${s * 6})`);
         minuteHand.setAttribute('transform', `rotate(${m * 6})`);
 
-        if (!dragState && !snapAnim) {
+        if (!dragState && !handAnim) {
           const h = (local / 3600) % 12;
           hourHand.setAttribute('transform', `rotate(${h * 30})`);
         }
