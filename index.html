@@ -54,12 +54,31 @@
     }
 
     .zone-city {
+      --slot-width: 0.85em;
       display: block;
+      width: 12em;
+      margin: 0 auto;
       font-size: clamp(28px, 4vw, 40px);
       font-weight: 700;
       letter-spacing: -0.02em;
       line-height: 1.15;
       height: 1.15em;
+    }
+
+    .zone-city .char-slot {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: var(--slot-width);
+      text-align: center;
+      display: block;
+      vertical-align: initial;
+    }
+
+    .zone-city .char-cell {
+      left: 0;
+      right: 0;
+      text-align: center;
     }
 
     .zone-offset {
@@ -396,54 +415,11 @@
 
       const ROLL_DURATION = 340;
       const ROLL_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
-
-      function rollText(slotEl, newText, direction) {
-        const cells = slotEl.querySelectorAll('.roll-cell');
-        const currentCell = cells[cells.length - 1];
-
-        // First-time render: replace any placeholder text with a single cell.
-        if (cells.length === 0) {
-          slotEl.textContent = '';
-          const cell = document.createElement('span');
-          cell.className = 'roll-cell';
-          cell.textContent = newText;
-          slotEl.appendChild(cell);
-          return;
-        }
-
-        if (currentCell.textContent === newText) return;
-
-        // Drop any older in-flight cells; only the latest matters.
-        for (let i = 0; i < cells.length - 1; i++) cells[i].remove();
-
-        const dir = direction >= 0 ? 1 : -1;
-
-        const newCell = document.createElement('span');
-        newCell.className = 'roll-cell';
-        newCell.textContent = newText;
-        newCell.style.transform = `translate(-50%, ${dir * 100}%)`;
-        slotEl.appendChild(newCell);
-
-        // Force layout so the starting transform is committed before transition.
-        newCell.getBoundingClientRect();
-
-        const trans = `transform ${ROLL_DURATION}ms ${ROLL_EASING}`;
-        currentCell.style.transition = trans;
-        newCell.style.transition = trans;
-
-        requestAnimationFrame(() => {
-          currentCell.style.transform = `translate(-50%, ${-dir * 100}%)`;
-          newCell.style.transform = 'translate(-50%, 0)';
-        });
-
-        setTimeout(() => {
-          if (currentCell.parentNode === slotEl) currentCell.remove();
-        }, ROLL_DURATION + 60);
-      }
-
-      // Per-character animation for the offset row: only changed chars roll.
-      const charSlots = [];
-      let lastOffsetDynamic = '';
+      const ROLL_BLUR = '0.2em';
+      const CELL_TRANSITION =
+        `transform ${ROLL_DURATION}ms ${ROLL_EASING},`
+        + ` opacity ${ROLL_DURATION}ms ${ROLL_EASING},`
+        + ` filter ${ROLL_DURATION}ms ${ROLL_EASING}`;
 
       function makeSlot(char) {
         const slot = document.createElement('span');
@@ -471,17 +447,22 @@
         newCell.className = 'char-cell';
         newCell.textContent = newChar;
         newCell.style.transform = `translateY(${dir * 100}%)`;
+        newCell.style.opacity = '0';
+        newCell.style.filter = `blur(${ROLL_BLUR})`;
         slot.appendChild(newCell);
 
         newCell.getBoundingClientRect();
 
-        const trans = `transform ${ROLL_DURATION}ms ${ROLL_EASING}`;
-        oldCell.style.transition = trans;
-        newCell.style.transition = trans;
+        oldCell.style.transition = CELL_TRANSITION;
+        newCell.style.transition = CELL_TRANSITION;
 
         requestAnimationFrame(() => {
           oldCell.style.transform = `translateY(${-dir * 100}%)`;
+          oldCell.style.opacity = '0';
+          oldCell.style.filter = `blur(${ROLL_BLUR})`;
           newCell.style.transform = 'translateY(0)';
+          newCell.style.opacity = '1';
+          newCell.style.filter = 'blur(0)';
         });
 
         setTimeout(() => {
@@ -492,67 +473,153 @@
       function rollSlotIn(slot, dir) {
         const cell = slot.querySelector('.char-cell');
         cell.style.transform = `translateY(${dir * 100}%)`;
+        cell.style.opacity = '0';
+        cell.style.filter = `blur(${ROLL_BLUR})`;
         cell.getBoundingClientRect();
-        cell.style.transition = `transform ${ROLL_DURATION}ms ${ROLL_EASING}`;
+        cell.style.transition = CELL_TRANSITION;
         requestAnimationFrame(() => {
           cell.style.transform = 'translateY(0)';
+          cell.style.opacity = '1';
+          cell.style.filter = 'blur(0)';
         });
       }
 
       function rollSlotOut(slot, dir) {
         const cells = slot.querySelectorAll('.char-cell');
         cells.forEach(cell => {
-          cell.style.transition = `transform ${ROLL_DURATION}ms ${ROLL_EASING}`;
+          cell.style.transition = CELL_TRANSITION;
           cell.style.transform = `translateY(${-dir * 100}%)`;
+          cell.style.opacity = '0';
+          cell.style.filter = `blur(${ROLL_BLUR})`;
         });
         setTimeout(() => {
           if (slot.parentNode) slot.remove();
         }, ROLL_DURATION + 60);
       }
 
-      function setOffsetCharRow(newDynamic, direction) {
-        const oldDynamic = lastOffsetDynamic;
-        if (oldDynamic === newDynamic) return;
+      // Center-anchored char rolling. Each slot lives at a fixed offset from
+      // the container's center; transitions between same-parity strings keep
+      // every letter in its own space.
+      function setCenteredRow(container, slots, oldText, newText, direction) {
+        if (oldText === newText) return;
 
-        const isFirstRender = charSlots.length === 0;
         const dir = direction >= 0 ? 1 : -1;
-        const minLen = Math.min(oldDynamic.length, newDynamic.length);
+        const isFirstRender = slots.length === 0;
 
-        // Roll any chars in the shared range that actually changed.
-        for (let i = 0; i < minLen; i++) {
-          if (oldDynamic[i] !== newDynamic[i]) {
-            rollSlot(charSlots[i], newDynamic[i], dir);
+        const oldOffsets = [];
+        for (let i = 0; i < oldText.length; i++) {
+          oldOffsets.push(i - (oldText.length - 1) / 2);
+        }
+        const newOffsets = [];
+        for (let i = 0; i < newText.length; i++) {
+          newOffsets.push(i - (newText.length - 1) / 2);
+        }
+
+        const setSlotX = (slot, offset, animate) => {
+          slot.style.transition = animate
+            ? `transform ${ROLL_DURATION}ms ${ROLL_EASING}`
+            : 'none';
+          slot.style.transform =
+            `translateX(calc(-50% + ${offset} * var(--slot-width)))`;
+        };
+
+        // Greedy match: each new position takes the closest unused old slot
+        // (within one slot of distance), so equal-parity transitions match
+        // perfectly and mixed-parity ones shift by half a slot.
+        const usedOld = new Set();
+        const plan = [];
+        for (let ni = 0; ni < newText.length; ni++) {
+          const target = newOffsets[ni];
+          let bestOi = -1;
+          let bestDist = Infinity;
+          for (let oi = 0; oi < oldText.length; oi++) {
+            if (usedOld.has(oi)) continue;
+            const d = Math.abs(oldOffsets[oi] - target);
+            if (d < bestDist) { bestDist = d; bestOi = oi; }
+          }
+          if (bestOi >= 0 && bestDist <= 1) {
+            usedOld.add(bestOi);
+            plan.push({ reuse: true, oldIdx: bestOi, char: newText[ni], offset: target });
+          } else {
+            plan.push({ reuse: false, char: newText[ni], offset: target });
           }
         }
 
-        // Append slots for any new positions on the right.
-        for (let i = oldDynamic.length; i < newDynamic.length; i++) {
-          const slot = makeSlot(newDynamic[i]);
-          charSlots.push(slot);
-          charRow.appendChild(slot);
+        const newSlots = [];
+        for (const item of plan) {
+          if (item.reuse) {
+            const slot = slots[item.oldIdx];
+            setSlotX(slot, item.offset, !isFirstRender);
+            if (oldText[item.oldIdx] !== item.char) {
+              rollSlot(slot, item.char, dir);
+            }
+            newSlots.push(slot);
+          } else {
+            const slot = makeSlot(item.char);
+            setSlotX(slot, item.offset, false);
+            container.appendChild(slot);
+            if (!isFirstRender) rollSlotIn(slot, dir);
+            newSlots.push(slot);
+          }
+        }
+
+        for (let oi = 0; oi < oldText.length; oi++) {
+          if (!usedOld.has(oi)) rollSlotOut(slots[oi], dir);
+        }
+
+        slots.length = 0;
+        slots.push(...newSlots);
+      }
+
+      // Per-position char rolling for any text container. Each character has
+      // its own slot; only positions whose characters change actually roll.
+      function setCharRow(container, slots, oldText, newText, direction) {
+        if (oldText === newText) return;
+
+        const isFirstRender = slots.length === 0;
+        const dir = direction >= 0 ? 1 : -1;
+        const minLen = Math.min(oldText.length, newText.length);
+
+        for (let i = 0; i < minLen; i++) {
+          if (oldText[i] !== newText[i]) {
+            rollSlot(slots[i], newText[i], dir);
+          }
+        }
+
+        for (let i = oldText.length; i < newText.length; i++) {
+          const slot = makeSlot(newText[i]);
+          slots.push(slot);
+          container.appendChild(slot);
           if (!isFirstRender) rollSlotIn(slot, dir);
         }
 
-        // Remove and animate out trailing slots.
-        while (charSlots.length > newDynamic.length) {
-          const slot = charSlots.pop();
+        while (slots.length > newText.length) {
+          const slot = slots.pop();
           rollSlotOut(slot, dir);
         }
-
-        lastOffsetDynamic = newDynamic;
       }
 
+      const offsetSlots = [];
+      const citySlots = [];
+      let lastOffsetDynamic = '';
+      let lastCityText = '';
       let lastDisplayedOffset = utcOffset;
+
+      // Strip any placeholder text from zoneCity before the slots take over.
+      zoneCity.textContent = '';
 
       function updateZoneLabel() {
         const tz = TIMEZONES.find(z => z.offset === utcOffset)
           || { offset: utcOffset, city: 'Custom' };
         const direction = utcOffset - lastDisplayedOffset;
         const sign = utcOffset >= 0 ? '+' : '-';
+        const offsetStr = `${sign}${Math.abs(utcOffset)}`;
 
-        rollText(zoneCity, tz.city, direction);
-        setOffsetCharRow(`${sign}${Math.abs(utcOffset)}`, direction);
+        setCenteredRow(zoneCity, citySlots, lastCityText, tz.city, direction);
+        setCharRow(charRow, offsetSlots, lastOffsetDynamic, offsetStr, direction);
 
+        lastCityText = tz.city;
+        lastOffsetDynamic = offsetStr;
         resetBtn.classList.toggle('visible', utcOffset !== localOffset);
         lastDisplayedOffset = utcOffset;
       }
