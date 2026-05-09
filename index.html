@@ -45,20 +45,68 @@
       user-select: none;
     }
 
+    .zone-city,
+    .zone-offset {
+      position: relative;
+      /* Clip vertically only — cells size to their text and may extend
+         past the wrapper horizontally without being cropped. */
+      clip-path: inset(0 -50vw);
+    }
+
     .zone-city {
+      display: block;
       font-size: clamp(28px, 4vw, 40px);
       font-weight: 700;
       letter-spacing: -0.02em;
-      line-height: 1.1;
+      line-height: 1.15;
+      height: 1.15em;
     }
 
     .zone-offset {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
       font-size: 12px;
       font-weight: 500;
       color: rgba(26, 26, 26, 0.55);
       letter-spacing: 0.18em;
       text-transform: uppercase;
       margin-top: 8px;
+      line-height: 1.4;
+      height: 1.4em;
+    }
+
+    .roll-cell {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+      will-change: transform;
+    }
+
+    .char-row {
+      display: inline-flex;
+      align-items: flex-start;
+    }
+
+    .char-slot {
+      position: relative;
+      display: inline-block;
+      vertical-align: top;
+    }
+
+    .char-phantom {
+      visibility: hidden;
+      white-space: pre;
+    }
+
+    .char-cell {
+      position: absolute;
+      top: 0;
+      left: 0;
+      white-space: pre;
+      will-change: transform;
     }
 
     .zone-hint {
@@ -146,7 +194,7 @@
   <main class="stage">
     <header class="zone">
       <div class="zone-city" id="zoneCity">London</div>
-      <div class="zone-offset" id="zoneOffset">UTC+0</div>
+      <div class="zone-offset" id="zoneOffset"><span class="utc-static">UTC</span><span class="char-row" id="charRow"></span></div>
       <div class="zone-hint">drag the hour hand</div>
     </header>
 
@@ -210,42 +258,105 @@
       const secondHand = document.getElementById('second');
       const zoneCity = document.getElementById('zoneCity');
       const zoneOffset = document.getElementById('zoneOffset');
+      const charRow = document.getElementById('charRow');
       const resetBtn = document.getElementById('resetBtn');
 
-      const TIMEZONES = [
-        { offset: -12, city: 'Baker Island' },
-        { offset: -11, city: 'Pago Pago' },
-        { offset: -10, city: 'Honolulu' },
-        { offset: -9,  city: 'Anchorage' },
-        { offset: -8,  city: 'Los Angeles' },
-        { offset: -7,  city: 'Denver' },
-        { offset: -6,  city: 'Mexico City' },
-        { offset: -5,  city: 'New York' },
-        { offset: -4,  city: 'Halifax' },
-        { offset: -3,  city: 'Sao Paulo' },
-        { offset: -2,  city: 'South Georgia' },
-        { offset: -1,  city: 'Azores' },
-        { offset: 0,   city: 'London' },
-        { offset: 1,   city: 'Paris' },
-        { offset: 2,   city: 'Cairo' },
-        { offset: 3,   city: 'Moscow' },
-        { offset: 4,   city: 'Dubai' },
-        { offset: 5,   city: 'Karachi' },
-        { offset: 6,   city: 'Dhaka' },
-        { offset: 7,   city: 'Bangkok' },
-        { offset: 8,   city: 'Singapore' },
-        { offset: 9,   city: 'Tokyo' },
-        { offset: 10,  city: 'Sydney' },
-        { offset: 11,  city: 'Noumea' },
-        { offset: 12,  city: 'Auckland' },
-        { offset: 13,  city: 'Apia' },
-        { offset: 14,  city: 'Kiritimati' },
+      // Candidate IANA zones, ordered by display preference.
+      // The first candidate matching a given current offset wins for that slot.
+      const ZONE_CANDIDATES = [
+        { zone: 'Etc/GMT+12',          city: 'Baker Island' },
+        { zone: 'Pacific/Pago_Pago',   city: 'Pago Pago' },
+        { zone: 'Pacific/Honolulu',    city: 'Honolulu' },
+        { zone: 'Pacific/Gambier',     city: 'Gambier' },
+        { zone: 'America/Anchorage',   city: 'Anchorage' },
+        { zone: 'America/Los_Angeles', city: 'Los Angeles' },
+        { zone: 'America/Phoenix',     city: 'Phoenix' },
+        { zone: 'America/Denver',      city: 'Denver' },
+        { zone: 'America/Mexico_City', city: 'Mexico City' },
+        { zone: 'America/Chicago',     city: 'Chicago' },
+        { zone: 'America/New_York',    city: 'New York' },
+        { zone: 'America/Halifax',     city: 'Halifax' },
+        { zone: 'America/Sao_Paulo',   city: 'Sao Paulo' },
+        { zone: 'Atlantic/South_Georgia', city: 'South Georgia' },
+        { zone: 'Atlantic/Cape_Verde', city: 'Cape Verde' },
+        { zone: 'Atlantic/Azores',     city: 'Azores' },
+        { zone: 'Atlantic/Reykjavik',  city: 'Reykjavik' },
+        { zone: 'Europe/London',       city: 'London' },
+        { zone: 'Africa/Lagos',        city: 'Lagos' },
+        { zone: 'Europe/Paris',        city: 'Paris' },
+        { zone: 'Africa/Johannesburg', city: 'Johannesburg' },
+        { zone: 'Europe/Athens',       city: 'Athens' },
+        { zone: 'Africa/Cairo',        city: 'Cairo' },
+        { zone: 'Europe/Moscow',       city: 'Moscow' },
+        { zone: 'Asia/Dubai',          city: 'Dubai' },
+        { zone: 'Asia/Karachi',        city: 'Karachi' },
+        { zone: 'Asia/Dhaka',          city: 'Dhaka' },
+        { zone: 'Asia/Bangkok',        city: 'Bangkok' },
+        { zone: 'Asia/Singapore',      city: 'Singapore' },
+        { zone: 'Asia/Tokyo',          city: 'Tokyo' },
+        { zone: 'Australia/Brisbane',  city: 'Brisbane' },
+        { zone: 'Australia/Sydney',    city: 'Sydney' },
+        { zone: 'Pacific/Noumea',      city: 'Noumea' },
+        { zone: 'Pacific/Fiji',        city: 'Fiji' },
+        { zone: 'Pacific/Auckland',    city: 'Auckland' },
+        { zone: 'Pacific/Apia',        city: 'Apia' },
+        { zone: 'Pacific/Kiritimati',  city: 'Kiritimati' },
       ];
+
+      // Compute the current UTC offset (in hours) for an IANA zone.
+      // Works by formatting the date in that zone, treating the parts as UTC,
+      // then comparing to the actual UTC timestamp.
+      function getOffsetForZone(zone, date) {
+        const dtf = new Intl.DateTimeFormat('en-US', {
+          timeZone: zone,
+          hour12: false,
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+        });
+        const parts = {};
+        for (const p of dtf.formatToParts(date)) {
+          if (p.type !== 'literal') parts[p.type] = p.value;
+        }
+        const hour = parts.hour === '24' ? 0 : parseInt(parts.hour, 10);
+        const asUTC = Date.UTC(
+          parseInt(parts.year, 10),
+          parseInt(parts.month, 10) - 1,
+          parseInt(parts.day, 10),
+          hour,
+          parseInt(parts.minute, 10),
+          parseInt(parts.second, 10)
+        );
+        return (asUTC - date.getTime()) / 3600000;
+      }
+
+      function buildTimezones() {
+        const now = new Date();
+        const map = new Map();
+        for (const c of ZONE_CANDIDATES) {
+          let offset;
+          try { offset = getOffsetForZone(c.zone, now); }
+          catch (_) { continue; }
+          if (!Number.isFinite(offset)) continue;
+          if (Math.abs(offset - Math.round(offset)) > 0.01) continue; // skip half-hour zones
+          const k = Math.round(offset);
+          if (k < -12 || k > 14) continue;
+          if (!map.has(k)) map.set(k, c.city);
+        }
+        const result = [];
+        for (let o = -12; o <= 14; o++) {
+          const sign = o >= 0 ? '+' : '-';
+          result.push({ offset: o, city: map.get(o) || `UTC${sign}${Math.abs(o)}` });
+        }
+        return result;
+      }
+
+      const TIMEZONES = buildTimezones();
 
       const localOffset = Math.max(-12, Math.min(14,
         Math.round(-new Date().getTimezoneOffset() / 60)));
       let utcOffset = localOffset;
 
+      // If the user's IANA zone has a meaningful city name, use it for their slot.
       try {
         const localZoneName = Intl.DateTimeFormat().resolvedOptions().timeZone;
         if (localZoneName && localZoneName.includes('/')) {
@@ -283,13 +394,167 @@
         minuteNumerals.appendChild(t);
       }
 
+      const ROLL_DURATION = 340;
+      const ROLL_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
+
+      function rollText(slotEl, newText, direction) {
+        const cells = slotEl.querySelectorAll('.roll-cell');
+        const currentCell = cells[cells.length - 1];
+
+        // First-time render: replace any placeholder text with a single cell.
+        if (cells.length === 0) {
+          slotEl.textContent = '';
+          const cell = document.createElement('span');
+          cell.className = 'roll-cell';
+          cell.textContent = newText;
+          slotEl.appendChild(cell);
+          return;
+        }
+
+        if (currentCell.textContent === newText) return;
+
+        // Drop any older in-flight cells; only the latest matters.
+        for (let i = 0; i < cells.length - 1; i++) cells[i].remove();
+
+        const dir = direction >= 0 ? 1 : -1;
+
+        const newCell = document.createElement('span');
+        newCell.className = 'roll-cell';
+        newCell.textContent = newText;
+        newCell.style.transform = `translate(-50%, ${dir * 100}%)`;
+        slotEl.appendChild(newCell);
+
+        // Force layout so the starting transform is committed before transition.
+        newCell.getBoundingClientRect();
+
+        const trans = `transform ${ROLL_DURATION}ms ${ROLL_EASING}`;
+        currentCell.style.transition = trans;
+        newCell.style.transition = trans;
+
+        requestAnimationFrame(() => {
+          currentCell.style.transform = `translate(-50%, ${-dir * 100}%)`;
+          newCell.style.transform = 'translate(-50%, 0)';
+        });
+
+        setTimeout(() => {
+          if (currentCell.parentNode === slotEl) currentCell.remove();
+        }, ROLL_DURATION + 60);
+      }
+
+      // Per-character animation for the offset row: only changed chars roll.
+      const charSlots = [];
+      let lastOffsetDynamic = '';
+
+      function makeSlot(char) {
+        const slot = document.createElement('span');
+        slot.className = 'char-slot';
+        const phantom = document.createElement('span');
+        phantom.className = 'char-phantom';
+        phantom.textContent = char;
+        const cell = document.createElement('span');
+        cell.className = 'char-cell';
+        cell.textContent = char;
+        slot.appendChild(phantom);
+        slot.appendChild(cell);
+        return slot;
+      }
+
+      function rollSlot(slot, newChar, dir) {
+        const cells = slot.querySelectorAll('.char-cell');
+        const oldCell = cells[cells.length - 1];
+        for (let i = 0; i < cells.length - 1; i++) cells[i].remove();
+
+        const phantom = slot.querySelector('.char-phantom');
+        if (phantom) phantom.textContent = newChar;
+
+        const newCell = document.createElement('span');
+        newCell.className = 'char-cell';
+        newCell.textContent = newChar;
+        newCell.style.transform = `translateY(${dir * 100}%)`;
+        slot.appendChild(newCell);
+
+        newCell.getBoundingClientRect();
+
+        const trans = `transform ${ROLL_DURATION}ms ${ROLL_EASING}`;
+        oldCell.style.transition = trans;
+        newCell.style.transition = trans;
+
+        requestAnimationFrame(() => {
+          oldCell.style.transform = `translateY(${-dir * 100}%)`;
+          newCell.style.transform = 'translateY(0)';
+        });
+
+        setTimeout(() => {
+          if (oldCell.parentNode === slot) oldCell.remove();
+        }, ROLL_DURATION + 60);
+      }
+
+      function rollSlotIn(slot, dir) {
+        const cell = slot.querySelector('.char-cell');
+        cell.style.transform = `translateY(${dir * 100}%)`;
+        cell.getBoundingClientRect();
+        cell.style.transition = `transform ${ROLL_DURATION}ms ${ROLL_EASING}`;
+        requestAnimationFrame(() => {
+          cell.style.transform = 'translateY(0)';
+        });
+      }
+
+      function rollSlotOut(slot, dir) {
+        const cells = slot.querySelectorAll('.char-cell');
+        cells.forEach(cell => {
+          cell.style.transition = `transform ${ROLL_DURATION}ms ${ROLL_EASING}`;
+          cell.style.transform = `translateY(${-dir * 100}%)`;
+        });
+        setTimeout(() => {
+          if (slot.parentNode) slot.remove();
+        }, ROLL_DURATION + 60);
+      }
+
+      function setOffsetCharRow(newDynamic, direction) {
+        const oldDynamic = lastOffsetDynamic;
+        if (oldDynamic === newDynamic) return;
+
+        const isFirstRender = charSlots.length === 0;
+        const dir = direction >= 0 ? 1 : -1;
+        const minLen = Math.min(oldDynamic.length, newDynamic.length);
+
+        // Roll any chars in the shared range that actually changed.
+        for (let i = 0; i < minLen; i++) {
+          if (oldDynamic[i] !== newDynamic[i]) {
+            rollSlot(charSlots[i], newDynamic[i], dir);
+          }
+        }
+
+        // Append slots for any new positions on the right.
+        for (let i = oldDynamic.length; i < newDynamic.length; i++) {
+          const slot = makeSlot(newDynamic[i]);
+          charSlots.push(slot);
+          charRow.appendChild(slot);
+          if (!isFirstRender) rollSlotIn(slot, dir);
+        }
+
+        // Remove and animate out trailing slots.
+        while (charSlots.length > newDynamic.length) {
+          const slot = charSlots.pop();
+          rollSlotOut(slot, dir);
+        }
+
+        lastOffsetDynamic = newDynamic;
+      }
+
+      let lastDisplayedOffset = utcOffset;
+
       function updateZoneLabel() {
         const tz = TIMEZONES.find(z => z.offset === utcOffset)
           || { offset: utcOffset, city: 'Custom' };
-        zoneCity.textContent = tz.city;
+        const direction = utcOffset - lastDisplayedOffset;
         const sign = utcOffset >= 0 ? '+' : '-';
-        zoneOffset.textContent = `UTC${sign}${Math.abs(utcOffset)}`;
+
+        rollText(zoneCity, tz.city, direction);
+        setOffsetCharRow(`${sign}${Math.abs(utcOffset)}`, direction);
+
         resetBtn.classList.toggle('visible', utcOffset !== localOffset);
+        lastDisplayedOffset = utcOffset;
       }
 
       updateZoneLabel();
