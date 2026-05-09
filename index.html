@@ -32,16 +32,50 @@
     .stage {
       min-height: 100vh;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 48px 24px;
+      padding: 32px 24px;
+      gap: 28px;
+    }
+
+    .zone {
+      text-align: center;
+      user-select: none;
+    }
+
+    .zone-city {
+      font-size: clamp(28px, 4vw, 40px);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+    }
+
+    .zone-offset {
+      font-size: 12px;
+      font-weight: 500;
+      color: rgba(26, 26, 26, 0.55);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      margin-top: 8px;
+    }
+
+    .zone-hint {
+      font-size: 11px;
+      color: rgba(26, 26, 26, 0.4);
+      margin-top: 6px;
+      letter-spacing: 0.04em;
     }
 
     .clock {
-      width: min(82vmin, 620px);
+      width: min(82vmin, 580px);
       aspect-ratio: 1 / 1;
       display: block;
+      touch-action: none;
     }
+
+    #hour { cursor: grab; }
+    #hour.dragging { cursor: grabbing; }
 
     .hour-numeral {
       font-family: "Nunito", ui-rounded, "SF Pro Rounded", system-ui, "Helvetica Neue", sans-serif;
@@ -68,6 +102,12 @@
 </head>
 <body>
   <main class="stage">
+    <header class="zone">
+      <div class="zone-city" id="zoneCity">London</div>
+      <div class="zone-offset" id="zoneOffset">UTC+0</div>
+      <div class="zone-hint">drag the hour hand</div>
+    </header>
+
     <svg class="clock" viewBox="-100 -100 200 200" role="img" aria-label="Analog clock">
       <!-- Face -->
       <circle r="96" fill="var(--face)" stroke="var(--rim)" stroke-width="0.6" />
@@ -93,6 +133,7 @@
 
       <!-- Hour hand (red pill, hollow slot near tip) -->
       <g id="hour">
+        <rect x="-7" y="-50" width="14" height="34" fill="transparent" pointer-events="all" />
         <rect x="-3" y="-46" width="6" height="26" rx="3" fill="var(--red)" />
         <rect x="-1.4" y="-41" width="2.8" height="4.5" rx="1.4" fill="var(--face)" />
       </g>
@@ -117,11 +158,47 @@
   <script>
     (function () {
       const svgns = 'http://www.w3.org/2000/svg';
-      const hourGroup = document.getElementById('hourNumerals');
-      const minuteGroup = document.getElementById('minuteNumerals');
+      const svg = document.querySelector('.clock');
+      const hourNumerals = document.getElementById('hourNumerals');
+      const minuteNumerals = document.getElementById('minuteNumerals');
       const hourHand = document.getElementById('hour');
       const minuteHand = document.getElementById('minute');
       const secondHand = document.getElementById('second');
+      const zoneCity = document.getElementById('zoneCity');
+      const zoneOffset = document.getElementById('zoneOffset');
+
+      const TIMEZONES = [
+        { offset: -12, city: 'Baker Island' },
+        { offset: -11, city: 'Pago Pago' },
+        { offset: -10, city: 'Honolulu' },
+        { offset: -9,  city: 'Anchorage' },
+        { offset: -8,  city: 'Los Angeles' },
+        { offset: -7,  city: 'Denver' },
+        { offset: -6,  city: 'Mexico City' },
+        { offset: -5,  city: 'New York' },
+        { offset: -4,  city: 'Halifax' },
+        { offset: -3,  city: 'Sao Paulo' },
+        { offset: -2,  city: 'South Georgia' },
+        { offset: -1,  city: 'Azores' },
+        { offset: 0,   city: 'London' },
+        { offset: 1,   city: 'Paris' },
+        { offset: 2,   city: 'Cairo' },
+        { offset: 3,   city: 'Moscow' },
+        { offset: 4,   city: 'Dubai' },
+        { offset: 5,   city: 'Karachi' },
+        { offset: 6,   city: 'Dhaka' },
+        { offset: 7,   city: 'Bangkok' },
+        { offset: 8,   city: 'Singapore' },
+        { offset: 9,   city: 'Tokyo' },
+        { offset: 10,  city: 'Sydney' },
+        { offset: 11,  city: 'Noumea' },
+        { offset: 12,  city: 'Auckland' },
+        { offset: 13,  city: 'Apia' },
+        { offset: 14,  city: 'Kiritimati' },
+      ];
+
+      let utcOffset = Math.max(-12, Math.min(14,
+        Math.round(-new Date().getTimezoneOffset() / 60)));
 
       for (let h = 1; h <= 12; h++) {
         const angle = h * 30 * Math.PI / 180;
@@ -134,7 +211,7 @@
         t.setAttribute('text-anchor', 'middle');
         t.setAttribute('dominant-baseline', 'central');
         t.textContent = h;
-        hourGroup.appendChild(t);
+        hourNumerals.appendChild(t);
       }
 
       for (let m = 1; m <= 60; m++) {
@@ -148,15 +225,116 @@
         t.setAttribute('text-anchor', 'middle');
         t.setAttribute('dominant-baseline', 'central');
         t.textContent = m;
-        minuteGroup.appendChild(t);
+        minuteNumerals.appendChild(t);
       }
+
+      function updateZoneLabel() {
+        const tz = TIMEZONES.find(z => z.offset === utcOffset)
+          || { offset: utcOffset, city: 'Custom' };
+        zoneCity.textContent = tz.city;
+        const sign = utcOffset >= 0 ? '+' : '-';
+        zoneOffset.textContent = `UTC${sign}${Math.abs(utcOffset)}`;
+      }
+
+      updateZoneLabel();
+
+      function getPointerSvgPosition(event) {
+        const rect = svg.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const scale = 200 / rect.width;
+        return {
+          x: (event.clientX - cx) * scale,
+          y: (event.clientY - cy) * scale,
+        };
+      }
+
+      function getPointerAngle(event) {
+        const p = getPointerSvgPosition(event);
+        let angle = Math.atan2(p.x, -p.y) * 180 / Math.PI;
+        if (angle < 0) angle += 360;
+        return angle;
+      }
+
+      function getCurrentHourHandAngle() {
+        const now = new Date();
+        const utcSec = now.getUTCHours() * 3600
+          + now.getUTCMinutes() * 60
+          + now.getUTCSeconds()
+          + now.getUTCMilliseconds() / 1000;
+        const local = utcSec + utcOffset * 3600;
+        const h = (((local / 3600) % 12) + 12) % 12;
+        return h * 30;
+      }
+
+      // Allow grabbing anywhere within a wedge near the hour hand,
+      // so the minute hand never blocks the drag target.
+      function isNearHourHand(event) {
+        const p = getPointerSvgPosition(event);
+        const distance = Math.hypot(p.x, p.y);
+        if (distance < 4 || distance > 54) return false;
+        const angle = getPointerAngle(event);
+        const handAngle = getCurrentHourHandAngle();
+        const diff = ((angle - handAngle + 540) % 360) - 180;
+        return Math.abs(diff) < 18;
+      }
+
+      let dragState = null;
+
+      svg.addEventListener('pointerdown', (e) => {
+        if (!isNearHourHand(e)) return;
+        e.preventDefault();
+        svg.setPointerCapture(e.pointerId);
+        hourHand.classList.add('dragging');
+        dragState = {
+          pointerId: e.pointerId,
+          startAngle: getPointerAngle(e),
+          cumulativeDelta: 0,
+          startOffset: utcOffset,
+        };
+      });
+
+      svg.addEventListener('pointermove', (e) => {
+        if (!dragState || dragState.pointerId !== e.pointerId) return;
+        e.preventDefault();
+        const angle = getPointerAngle(e);
+        let delta = angle - dragState.startAngle;
+        // Unwrap: keep delta continuous across the 0/360 boundary.
+        while (delta - dragState.cumulativeDelta > 180) delta -= 360;
+        while (delta - dragState.cumulativeDelta < -180) delta += 360;
+        dragState.cumulativeDelta = delta;
+
+        const offsetChange = Math.round(delta / 30);
+        const newOffset = Math.max(-12, Math.min(14,
+          dragState.startOffset + offsetChange));
+
+        if (newOffset !== utcOffset) {
+          utcOffset = newOffset;
+          updateZoneLabel();
+        }
+      });
+
+      function endDrag(e) {
+        if (!dragState || dragState.pointerId !== e.pointerId) return;
+        try { svg.releasePointerCapture(e.pointerId); } catch (_) {}
+        hourHand.classList.remove('dragging');
+        dragState = null;
+      }
+
+      svg.addEventListener('pointerup', endDrag);
+      svg.addEventListener('pointercancel', endDrag);
 
       function tick() {
         const now = new Date();
-        const ms = now.getMilliseconds();
-        const s = now.getSeconds() + ms / 1000;
-        const m = now.getMinutes() + s / 60;
-        const h = (now.getHours() % 12) + m / 60;
+        const utcSec = now.getUTCHours() * 3600
+          + now.getUTCMinutes() * 60
+          + now.getUTCSeconds()
+          + now.getUTCMilliseconds() / 1000;
+        const local = (((utcSec + utcOffset * 3600) % 86400) + 86400) % 86400;
+
+        const s = local % 60;
+        const m = (local / 60) % 60;
+        const h = (local / 3600) % 12;
 
         secondHand.setAttribute('transform', `rotate(${s * 6})`);
         minuteHand.setAttribute('transform', `rotate(${m * 6})`);
