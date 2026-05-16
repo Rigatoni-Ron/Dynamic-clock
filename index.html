@@ -54,9 +54,8 @@
     }
 
     .zone-city {
-      --slot-width: 0.85em;
       display: block;
-      width: 12em;
+      width: 10em;
       margin: 0 auto;
       font-size: clamp(28px, 4vw, 40px);
       font-weight: 700;
@@ -69,7 +68,6 @@
       position: absolute;
       top: 0;
       left: 50%;
-      width: var(--slot-width);
       text-align: center;
       display: block;
       vertical-align: initial;
@@ -506,66 +504,79 @@
         const dir = direction >= 0 ? 1 : -1;
         const isFirstRender = slots.length === 0;
 
-        const oldOffsets = [];
-        for (let i = 0; i < oldText.length; i++) {
-          oldOffsets.push(i - (oldText.length - 1) / 2);
-        }
-        const newOffsets = [];
-        for (let i = 0; i < newText.length; i++) {
-          newOffsets.push(i - (newText.length - 1) / 2);
-        }
+        // Match by logical (index-from-center) position, so same-parity
+        // transitions map letters 1:1 and mixed parity nudges by half a slot.
+        const oldLogical = i => i - (oldText.length - 1) / 2;
+        const newLogical = i => i - (newText.length - 1) / 2;
 
-        const setSlotX = (slot, offset, animate) => {
-          slot.style.transition = animate
-            ? `transform ${ROLL_DURATION}ms ${ROLL_EASING}`
-            : 'none';
-          slot.style.transform =
-            `translateX(calc(-50% + ${offset} * var(--slot-width)))`;
-        };
-
-        // Greedy match: each new position takes the closest unused old slot
-        // (within one slot of distance), so equal-parity transitions match
-        // perfectly and mixed-parity ones shift by half a slot.
         const usedOld = new Set();
         const plan = [];
         for (let ni = 0; ni < newText.length; ni++) {
-          const target = newOffsets[ni];
+          const target = newLogical(ni);
           let bestOi = -1;
           let bestDist = Infinity;
           for (let oi = 0; oi < oldText.length; oi++) {
             if (usedOld.has(oi)) continue;
-            const d = Math.abs(oldOffsets[oi] - target);
+            const d = Math.abs(oldLogical(oi) - target);
             if (d < bestDist) { bestDist = d; bestOi = oi; }
           }
           if (bestOi >= 0 && bestDist <= 1) {
             usedOld.add(bestOi);
-            plan.push({ reuse: true, oldIdx: bestOi, char: newText[ni], offset: target });
+            plan.push({ reuse: true, oldIdx: bestOi, char: newText[ni] });
           } else {
-            plan.push({ reuse: false, char: newText[ni], offset: target });
+            plan.push({ reuse: false, char: newText[ni] });
           }
         }
 
+        // Build the new slot list, updating chars on reused slots first so
+        // their phantom widths reflect the new layout when we measure below.
         const newSlots = [];
         for (const item of plan) {
           if (item.reuse) {
             const slot = slots[item.oldIdx];
-            setSlotX(slot, item.offset, !isFirstRender);
             if (oldText[item.oldIdx] !== item.char) {
               rollSlot(slot, item.char, dir);
             }
             newSlots.push(slot);
           } else {
             const slot = makeSlot(item.char);
-            setSlotX(slot, item.offset, false);
             container.appendChild(slot);
-            if (!isFirstRender) rollSlotIn(slot, dir);
             newSlots.push(slot);
           }
         }
 
+        const exitSlots = [];
         for (let oi = 0; oi < oldText.length; oi++) {
-          if (!usedOld.has(oi)) rollSlotOut(slots[oi], dir);
+          if (!usedOld.has(oi)) exitSlots.push(slots[oi]);
         }
+
+        // Measure each slot's natural width via its phantom (forces layout).
+        const widths = newSlots.map(s =>
+          s.querySelector('.char-phantom').getBoundingClientRect().width);
+        const totalWidth = widths.reduce((a, b) => a + b, 0);
+
+        // Position each slot's center based on cumulative widths so the row
+        // is centered as a whole in the container.
+        let cumulative = 0;
+        for (let i = 0; i < newSlots.length; i++) {
+          const center = cumulative + widths[i] / 2 - totalWidth / 2;
+          cumulative += widths[i];
+
+          const slot = newSlots[i];
+          const animate = !isFirstRender && plan[i].reuse;
+          slot.style.transition = animate
+            ? `transform ${ROLL_DURATION}ms ${ROLL_EASING}`
+            : 'none';
+          slot.style.transform = `translateX(calc(-50% + ${center}px))`;
+        }
+
+        if (!isFirstRender) {
+          for (let i = 0; i < newSlots.length; i++) {
+            if (!plan[i].reuse) rollSlotIn(newSlots[i], dir);
+          }
+        }
+
+        for (const slot of exitSlots) rollSlotOut(slot, dir);
 
         slots.length = 0;
         slots.push(...newSlots);
