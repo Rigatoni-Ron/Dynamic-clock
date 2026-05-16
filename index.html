@@ -62,6 +62,10 @@
       letter-spacing: -0.02em;
       line-height: 1.15;
       height: 1.15em;
+      /* Soft vertical fade at the clip boundary so exiting letters dissolve
+         instead of revealing a hard edge while their opacity is still > 0. */
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 14%, #000 86%, transparent 100%);
+              mask-image: linear-gradient(to bottom, transparent 0%, #000 14%, #000 86%, transparent 100%);
     }
 
     .zone-city .char-slot {
@@ -412,12 +416,15 @@
       }
 
       const ROLL_DURATION = 340;
+      // Opacity + blur finish well before transform so letters are fully
+      // dissolved before they reach the clip boundary.
+      const ROLL_FADE_DURATION = 180;
       const ROLL_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
       const ROLL_BLUR = '0.2em';
       const CELL_TRANSITION =
         `transform ${ROLL_DURATION}ms ${ROLL_EASING},`
-        + ` opacity ${ROLL_DURATION}ms ${ROLL_EASING},`
-        + ` filter ${ROLL_DURATION}ms ${ROLL_EASING}`;
+        + ` opacity ${ROLL_FADE_DURATION}ms ${ROLL_EASING},`
+        + ` filter ${ROLL_FADE_DURATION}ms ${ROLL_EASING}`;
 
       function makeSlot(char) {
         const slot = document.createElement('span');
